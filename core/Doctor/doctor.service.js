@@ -1,6 +1,7 @@
 import logger from "../../utils/logger.js";
 import Doctor from "./doctor.model.js";
 import Appointment from "../Appointment/appointment.model.js";
+import { safeEmit } from "../../utils/socket.js";
 import {
   createDoctorProfileSchema,
   updateDoctorProfileSchema,
@@ -12,14 +13,10 @@ class DoctorService {
   async createProfile(req, res) {
     try {
       const existing = await Doctor.findOne({ user: req.user._id });
-      if (existing) {
-        return res.status(400).json({ status: "fail", message: "Doctor profile already exists" });
-      }
+      if (existing) return res.status(400).json({ status: "fail", message: "Doctor profile already exists" });
 
       const { error, value } = createDoctorProfileSchema.validate(req.body);
-      if (error) {
-        return res.status(400).json({ status: "fail", message: error.message });
-      }
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
 
       const doctor = await Doctor.create({ ...value, user: req.user._id });
       await doctor.populate("user", "name email phone");
@@ -38,9 +35,7 @@ class DoctorService {
   async getMyProfile(req, res) {
     try {
       const doctor = await Doctor.findOne({ user: req.user._id }).populate("user", "name email phone location");
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found. Please create one." });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found. Please create one." });
       return res.status(200).json({ status: "success", message: "Profile fetched", data: doctor });
     } catch (err) {
       logger.error(`GetMyProfile: ${err}`);
@@ -50,19 +45,36 @@ class DoctorService {
 
   async updateMyProfile(req, res) {
     try {
-      const { error, value } = updateDoctorProfileSchema.validate(req.body);
-      if (error) {
-        return res.status(400).json({ status: "fail", message: error.message });
+      let body = { ...req.body };
+
+      if (body.experience !== undefined) body.experience = Number(body.experience);
+      if (body.fees !== undefined) body.fees = Number(body.fees);
+
+      if (typeof body.qualifications === "string") {
+        body.qualifications = body.qualifications.split(",").map((q) => q.trim()).filter(Boolean);
       }
 
-      const doctor = await Doctor.findOneAndUpdate({ user: req.user._id }, value, {
-        new: true,
-        runValidators: true,
-      }).populate("user", "name email phone");
-
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
+      let parsedSlots = null;
+      if (typeof body.availabilitySlots === "string" && body.availabilitySlots.trim()) {
+        try {
+          parsedSlots = JSON.parse(body.availabilitySlots);
+        } catch {
+          return res.status(400).json({ status: "fail", message: "availabilitySlots must be valid JSON" });
+        }
+        delete body.availabilitySlots;
       }
+
+      const { error, value } = updateDoctorProfileSchema.validate(body);
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
+
+      if (req.file) value.profileImage = `/uploads/${req.file.filename}`;
+      if (parsedSlots) value.availabilitySlots = parsedSlots;
+
+      const doctor = await Doctor.findOneAndUpdate(
+        { user: req.user._id },
+        { ...value, user: req.user._id },
+        { new: true, runValidators: true, upsert: true, setDefaultsOnInsert: true }
+      ).populate("user", "name email phone");
 
       return res.status(200).json({ status: "success", message: "Profile updated", data: doctor });
     } catch (err) {
@@ -74,25 +86,16 @@ class DoctorService {
   async setAvailability(req, res) {
     try {
       const { error, value } = availabilitySlotsSchema.validate(req.body);
-      if (error) {
-        return res.status(400).json({ status: "fail", message: error.message });
-      }
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
 
       const doctor = await Doctor.findOneAndUpdate(
         { user: req.user._id },
         { availabilitySlots: value.slots },
         { new: true }
       );
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
 
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
-      }
-
-      return res.status(200).json({
-        status: "success",
-        message: "Availability updated",
-        data: doctor.availabilitySlots,
-      });
+      return res.status(200).json({ status: "success", message: "Availability updated", data: doctor.availabilitySlots });
     } catch (err) {
       logger.error(`SetAvailability: ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to update availability" });
@@ -101,9 +104,7 @@ class DoctorService {
 
   async uploadProfileImage(req, res) {
     try {
-      if (!req.file) {
-        return res.status(400).json({ status: "fail", message: "No image file uploaded" });
-      }
+      if (!req.file) return res.status(400).json({ status: "fail", message: "No image file uploaded" });
 
       const imageUrl = `/uploads/${req.file.filename}`;
       const doctor = await Doctor.findOneAndUpdate(
@@ -111,10 +112,7 @@ class DoctorService {
         { profileImage: imageUrl },
         { new: true }
       );
-
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
 
       return res.status(200).json({ status: "success", message: "Profile image uploaded", data: { profileImage: imageUrl } });
     } catch (err) {
@@ -125,21 +123,15 @@ class DoctorService {
 
   async uploadDocuments(req, res) {
     try {
-      if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ status: "fail", message: "No document files uploaded" });
-      }
+      if (!req.files || req.files.length === 0) return res.status(400).json({ status: "fail", message: "No document files uploaded" });
 
       const docUrls = req.files.map((f) => `/uploads/${f.filename}`);
-
       const doctor = await Doctor.findOneAndUpdate(
         { user: req.user._id },
         { $push: { documents: { $each: docUrls } } },
         { new: true }
       );
-
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
 
       return res.status(200).json({ status: "success", message: "Documents uploaded", data: { documents: doctor.documents } });
     } catch (err) {
@@ -157,37 +149,24 @@ class DoctorService {
       const filter = { isApproved: true };
       if (specialization) filter.specialization = { $regex: specialization, $options: "i" };
       if (location) filter.location = { $regex: location, $options: "i" };
-
-      let query = Doctor.find(filter)
-        .populate("user", "name email phone")
-        .select("-documents -__v")
-        .skip(skip)
-        .limit(limit)
-        .sort({ averageRating: -1, createdAt: -1 });
-
       if (search) {
-        const userIds = await import("../User/user.model.js").then(({ default: User }) =>
-          User.find({ name: { $regex: search, $options: "i" } }, "_id")
-        );
         filter.$or = [
           { specialization: { $regex: search, $options: "i" } },
           { location: { $regex: search, $options: "i" } },
-          { user: { $in: userIds.map((u) => u._id) } },
         ];
-        query = Doctor.find(filter)
+      }
+
+      const [doctors, total] = await Promise.all([
+        Doctor.find(filter)
           .populate("user", "name email phone")
           .select("-documents -__v")
           .skip(skip)
-          .limit(limit);
-      }
+          .limit(limit)
+          .sort({ averageRating: -1, createdAt: -1 }),
+        Doctor.countDocuments(filter),
+      ]);
 
-      const [doctors, total] = await Promise.all([query, Doctor.countDocuments(filter)]);
-
-      return res.status(200).json({
-        status: "success",
-        message: "Doctors fetched",
-        data: { total, doctors },
-      });
+      return res.status(200).json({ status: "success", message: "Doctors fetched", data: { total, doctors } });
     } catch (err) {
       logger.error(`GetDoctors: ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to fetch doctors" });
@@ -196,15 +175,17 @@ class DoctorService {
 
   async getDoctorById(req, res) {
     try {
-      const doctor = await Doctor.findById(req.params.id)
-        .populate("user", "name email phone")
-        .select("-documents -__v");
+      const [doctor, bookedSlots] = await Promise.all([
+        Doctor.findById(req.params.id).populate("user", "name email phone").select("-documents -__v"),
+        Appointment.find({ doctor: req.params.id, status: { $nin: ["Rejected", "Cancelled"] } })
+          .select("appointmentDate timeSlot")
+          .sort({ appointmentDate: 1 })
+          .lean(),
+      ]);
 
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor not found" });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor not found" });
 
-      return res.status(200).json({ status: "success", message: "Doctor fetched", data: doctor });
+      return res.status(200).json({ status: "success", message: "Doctor fetched", data: { doctor, bookedSlots } });
     } catch (err) {
       logger.error(`GetDoctorById: ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to fetch doctor" });
@@ -214,9 +195,7 @@ class DoctorService {
   async getMyAppointments(req, res) {
     try {
       const doctor = await Doctor.findOne({ user: req.user._id });
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
 
       const { status, date, skip = 0, limit = 20 } = req.query;
       const filter = { doctor: doctor._id };
@@ -233,11 +212,7 @@ class DoctorService {
         Appointment.countDocuments(filter),
       ]);
 
-      return res.status(200).json({
-        status: "success",
-        message: "Appointments fetched",
-        data: { total, appointments },
-      });
+      return res.status(200).json({ status: "success", message: "Appointments fetched", data: { total, appointments } });
     } catch (err) {
       logger.error(`GetMyAppointments (doctor): ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to fetch appointments" });
@@ -247,34 +222,31 @@ class DoctorService {
   async updateAppointmentStatus(req, res) {
     try {
       const { error, value } = updateAppointmentStatusSchema.validate(req.body);
-      if (error) {
-        return res.status(400).json({ status: "fail", message: error.message });
-      }
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
 
       const doctor = await Doctor.findOne({ user: req.user._id });
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
-      }
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor profile not found" });
 
-      const appointment = await Appointment.findOne({
-        _id: req.params.id,
-        doctor: doctor._id,
-      });
-
-      if (!appointment) {
-        return res.status(404).json({ status: "fail", message: "Appointment not found" });
-      }
+      const appointment = await Appointment.findOne({ _id: req.params.id, doctor: doctor._id });
+      if (!appointment) return res.status(404).json({ status: "fail", message: "Appointment not found" });
 
       if (["Cancelled", "Completed"].includes(appointment.status)) {
-        return res.status(400).json({
-          status: "fail",
-          message: `Cannot update a ${appointment.status.toLowerCase()} appointment`,
-        });
+        return res.status(400).json({ status: "fail", message: `Cannot update a ${appointment.status.toLowerCase()} appointment` });
       }
 
       appointment.status = value.status;
       if (value.notes) appointment.notes = value.notes;
       await appointment.save();
+
+      const apptObj = appointment.toObject();
+      safeEmit(`user:${appointment.patient.toString()}`, "appointment:updated", {
+        appointment: apptObj,
+        message: `Your appointment has been ${value.status.toLowerCase()}`,
+      });
+      safeEmit("user:admin", "appointment:updated", {
+        appointment: apptObj,
+        message: `Appointment status changed to ${value.status} by doctor`,
+      });
 
       return res.status(200).json({ status: "success", message: "Appointment status updated", data: appointment });
     } catch (err) {

@@ -37,6 +37,12 @@ class AuthController {
     return authService.updateMe(req, res);
   }
 
+  async doctorRegister(req, res) {
+    /* #swagger.tags = ['Auth']
+       #swagger.description = 'Submit a doctor registration application (multipart/form-data)' */
+    return authService.doctorRegister(req, res);
+  }
+
   async changePassword(req, res) {
     /* #swagger.tags = ['Auth']
        #swagger.description = 'Change the logged-in user password' */

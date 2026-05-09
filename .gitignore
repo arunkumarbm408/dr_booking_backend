@@ -3,3 +3,6 @@ node_modules
 logs
 config
 swagger-api-view.json
+.env
+.env.example
+logs

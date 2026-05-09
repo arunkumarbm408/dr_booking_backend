@@ -31,6 +31,7 @@ export const updateDoctorProfileSchema = Joi.object({
   location: Joi.string().trim().optional(),
   about: Joi.string().allow("").optional(),
   qualifications: Joi.array().items(Joi.string().trim()).optional(),
+  availabilitySlots: Joi.array().items(slotSchema).optional(),
 });
 
 export const availabilitySlotsSchema = Joi.object({

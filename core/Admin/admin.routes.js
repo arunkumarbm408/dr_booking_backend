@@ -11,6 +11,7 @@ router.get("/users", adminController.getAllUsers);
 router.put("/users/:id/toggle-status", adminController.toggleUserStatus);
 router.get("/doctors", adminController.getAllDoctors);
 router.put("/doctors/:id/approve", adminController.approveDoctorProfile);
+router.post("/doctors/:id/request-info", adminController.requestMoreInfo);
 router.get("/appointments", adminController.getAllAppointments);
 router.get("/payments", adminController.getAllPayments);
 

@@ -1,3 +1,4 @@
+import http from "http";
 import express from "express";
 import morgan from "morgan";
 import helmet from "helmet";
@@ -20,6 +21,7 @@ import routes from "./routes/index.js";
 import { connectDB } from "./utils/database.js";
 import logger from "./utils/logger.js";
 import { auth} from "./views/swaggerAuth.js";
+import { initSocket } from "./utils/socket.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +30,7 @@ const swaggerFile = JSON.parse(
 );
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = process.env.PORT
 
 
@@ -45,7 +48,7 @@ app.use(cors({ origin: "*" }));
 app.options("*", cors()); 
 
 const limiter = rateLimit({
-  max: 100,
+  max: 10000,
   windowMs: 60 * 60 * 1000,
   message: "Too many requests from this IP, please try again in an hour!",
 });
@@ -83,7 +86,8 @@ app.use(globalErrorHandler);
 const startServer = async () => {
   try {
     await connectDB();
-    app.listen(PORT, () => {
+    initSocket(httpServer);
+    httpServer.listen(PORT, () => {
       logger.info(
         `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
       );

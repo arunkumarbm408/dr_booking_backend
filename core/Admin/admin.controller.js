@@ -41,6 +41,13 @@ class AdminController {
     return adminService.approveDoctorProfile(req, res);
   }
 
+  async requestMoreInfo(req, res) {
+    /* #swagger.tags = ['Admin']
+       #swagger.description = 'Request additional information from a doctor applicant (admin only)' */
+    /* #swagger.security = [{ "AccessToken": [] }] */
+    return adminService.requestMoreInfo(req, res);
+  }
+
   async getAllAppointments(req, res) {
     /* #swagger.tags = ['Admin']
        #swagger.description = 'List all appointments with optional status filter (admin only)' */

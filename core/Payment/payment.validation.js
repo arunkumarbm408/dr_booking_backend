@@ -2,7 +2,7 @@ import Joi from "joi";
 
 export const createPaymentSchema = Joi.object({
   appointmentId: Joi.string().required(),
-  amount: Joi.number().min(0).required(),
+  amount: Joi.number().min(0).optional(),
   method: Joi.string().default("PhonePe"),
   utrId: Joi.string().trim().allow("").optional(),
 });

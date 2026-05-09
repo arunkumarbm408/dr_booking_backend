@@ -3,6 +3,8 @@ import User from "../User/user.model.js";
 import Doctor from "../Doctor/doctor.model.js";
 import Appointment from "../Appointment/appointment.model.js";
 import Payment from "../Payment/payment.model.js";
+import { safeEmit } from "../../utils/socket.js";
+import { sendEmail, emailTemplates } from "../../utils/email.js";
 
 class AdminService {
   async getDashboard(req, res) {
@@ -105,29 +107,125 @@ class AdminService {
 
   async approveDoctorProfile(req, res) {
     try {
-      const { isApproved } = req.body;
+      const { isApproved, rejectionReason } = req.body;
       if (typeof isApproved !== "boolean") {
         return res.status(400).json({ status: "fail", message: "isApproved must be a boolean" });
       }
 
-      const doctor = await Doctor.findByIdAndUpdate(
-        req.params.id,
-        { isApproved },
-        { new: true }
-      ).populate("user", "name email");
+      const action = isApproved ? "Approved" : "Rejected";
+      const update = {
+        $set: {
+          isApproved,
+          verificationStatus: action,
+          rejectionReason: !isApproved && rejectionReason ? rejectionReason : "",
+        },
+        $push: {
+          verificationHistory: {
+            action,
+            byName: req.user.name,
+            at: new Date(),
+            note: !isApproved && rejectionReason ? rejectionReason : "",
+          },
+        },
+      };
 
-      if (!doctor) {
-        return res.status(404).json({ status: "fail", message: "Doctor not found" });
-      }
+      const doctor = await Doctor.findByIdAndUpdate(req.params.id, update, { new: true })
+        .populate("user", "name email phone isActive");
+
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor not found" });
+      if (!doctor.user) return res.status(404).json({ status: "fail", message: "Linked user account not found" });
+
+      await User.findByIdAndUpdate(doctor.user._id, { isActive: isApproved });
+
+      const emailResult = isApproved
+        ? await sendEmail({
+            to: doctor.user.email,
+            subject: "Congratulations! Your Doctor Account is Approved — Doctor Book",
+            html: emailTemplates.approved(doctor.user.name, doctor.user.email),
+          })
+        : await sendEmail({
+            to: doctor.user.email,
+            subject: "Doctor Application Status Update — Doctor Book",
+            html: emailTemplates.rejected(doctor.user.name, rejectionReason || ""),
+          });
+
+      await Doctor.findByIdAndUpdate(doctor._id, {
+        $push: {
+          emailLog: {
+            type: isApproved ? "approved" : "rejected",
+            sentAt: new Date(),
+            status: emailResult.success ? "sent" : "failed",
+            messageId: emailResult.messageId || "",
+          },
+        },
+      });
+
+      safeEmit(`user:${doctor.user._id.toString()}`, "doctor:approved", {
+        isApproved: doctor.isApproved,
+        message: `Your doctor profile has been ${action.toLowerCase()}`,
+      });
 
       return res.status(200).json({
         status: "success",
-        message: `Doctor profile ${isApproved ? "approved" : "rejected"}`,
+        message: `Doctor profile ${action.toLowerCase()}`,
         data: doctor,
       });
     } catch (err) {
       logger.error(`ApproveDoctorProfile: ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to update doctor status" });
+    }
+  }
+
+  async requestMoreInfo(req, res) {
+    try {
+      const { message } = req.body;
+      if (!message?.trim()) {
+        return res.status(400).json({ status: "fail", message: "A message is required" });
+      }
+
+      const doctor = await Doctor.findByIdAndUpdate(
+        req.params.id,
+        {
+          $set: { verificationStatus: "Info Requested" },
+          $push: {
+            verificationHistory: {
+              action: "Info Requested",
+              byName: req.user.name,
+              at: new Date(),
+              note: message,
+            },
+          },
+        },
+        { new: true }
+      ).populate("user", "name email phone isActive");
+
+      if (!doctor) return res.status(404).json({ status: "fail", message: "Doctor not found" });
+
+      const emailResult = await sendEmail({
+        to: doctor.user.email,
+        subject: "Additional Information Required — Doctor Book",
+        html: emailTemplates.infoRequested(doctor.user.name, message),
+      });
+
+      await Doctor.findByIdAndUpdate(doctor._id, {
+        $push: {
+          emailLog: {
+            type: "infoRequested",
+            sentAt: new Date(),
+            status: emailResult.success ? "sent" : "failed",
+            messageId: emailResult.messageId || "",
+          },
+        },
+      });
+
+      return res.status(200).json({
+        status: "success",
+        message: "Information request sent to doctor",
+        data: doctor,
+      });
+    } catch (err) {
+      logger.error(`RequestMoreInfo: ${err}`);
+      return res.status(500).json({ status: "error", message: "Failed to send info request" });
     }
   }
 

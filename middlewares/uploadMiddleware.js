@@ -32,3 +32,7 @@ const limits = { fileSize: 5 * 1024 * 1024 };
 export const uploadProfileImage = multer({ storage, fileFilter, limits }).single("profileImage");
 export const uploadDocuments = multer({ storage, fileFilter, limits }).array("documents", 5);
 export const uploadPaymentScreenshot = multer({ storage, fileFilter, limits }).single("screenshot");
+export const uploadDoctorRegistration = multer({ storage, fileFilter, limits }).fields([
+  { name: "profileImage", maxCount: 1 },
+  { name: "documents", maxCount: 5 },
+]);
