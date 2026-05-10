@@ -1,8 +1,37 @@
-node_modules
-*.env
-logs
-config
-swagger-api-view.json
+# Dependencies
+node_modules/
+
+# Environment files
 .env
+.env.*
 .env.example
-logs
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build files
+dist/
+build/
+
+# Config files
+config/
+
+# Swagger files
+swagger-api-view.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
