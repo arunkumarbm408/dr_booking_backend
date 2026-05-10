@@ -1,5 +1,33 @@
 import logger from "../../utils/logger.js";
 import Doctor from "./doctor.model.js";
+
+function toMinutes(time) {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function validateSlotsNoOverlap(slots) {
+  const byDay = {};
+  for (const s of slots) {
+    (byDay[s.day] = byDay[s.day] || []).push(s);
+  }
+  for (const [day, daySlots] of Object.entries(byDay)) {
+    for (const s of daySlots) {
+      if (toMinutes(s.startTime) >= toMinutes(s.endTime)) {
+        return `${day}: startTime must be before endTime (${s.startTime}–${s.endTime})`;
+      }
+    }
+    const sorted = [...daySlots].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (toMinutes(curr.startTime) < toMinutes(prev.endTime)) {
+        return `${day}: slots ${prev.startTime}–${prev.endTime} and ${curr.startTime}–${curr.endTime} overlap`;
+      }
+    }
+  }
+  return null;
+}
 import Appointment from "../Appointment/appointment.model.js";
 import { safeEmit } from "../../utils/socket.js";
 import {
@@ -68,7 +96,11 @@ class DoctorService {
       if (error) return res.status(400).json({ status: "fail", message: error.message });
 
       if (req.file) value.profileImage = `/uploads/${req.file.filename}`;
-      if (parsedSlots) value.availabilitySlots = parsedSlots;
+      if (parsedSlots) {
+        const overlapError = validateSlotsNoOverlap(parsedSlots);
+        if (overlapError) return res.status(400).json({ status: "fail", message: overlapError });
+        value.availabilitySlots = parsedSlots;
+      }
 
       const doctor = await Doctor.findOneAndUpdate(
         { user: req.user._id },
@@ -87,6 +119,9 @@ class DoctorService {
     try {
       const { error, value } = availabilitySlotsSchema.validate(req.body);
       if (error) return res.status(400).json({ status: "fail", message: error.message });
+
+      const overlapError = validateSlotsNoOverlap(value.slots);
+      if (overlapError) return res.status(400).json({ status: "fail", message: overlapError });
 
       const doctor = await Doctor.findOneAndUpdate(
         { user: req.user._id },

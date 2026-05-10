@@ -1,24 +1,27 @@
-import sgMail from "@sendgrid/mail";
+import nodemailer from "nodemailer";
 import logger from "./logger.js";
 
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+let transporter = null;
+
+function getTransporter() {
+  if (transporter) return transporter;
+  const { GMAIL_USER, GMAIL_APP_PASSWORD } = process.env;
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) return null;
+  transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    tls: { rejectUnauthorized: false },
+  });
+  return transporter;
 }
 
-const FROM = {
-  email: process.env.SENDGRID_FROM_EMAIL || "care@doctorbook.com",
-  name: process.env.SENDGRID_FROM_NAME || "Doctor Book",
-};
-
-/**
- * Send a transactional email via SendGrid.
- * @returns {{ success: boolean, messageId?: string, error?: string }}
- */
 export async function sendEmail({ to, subject, html }) {
-  if (!process.env.SENDGRID_API_KEY) {
-    logger.warn(`Email skipped (SENDGRID_API_KEY not set): "${subject}" → ${to}`);
-    return { success: false, error: "SendGrid not configured" };
+  const t = getTransporter();
+  if (!t) {
+    logger.warn(`Email skipped (GMAIL_USER / GMAIL_APP_PASSWORD not set): "${subject}" → ${to}`);
+    return { success: false, error: "Gmail not configured" };
   }
+  const FROM = `"${process.env.GMAIL_FROM_NAME || "Doctor Book"}" <${process.env.GMAIL_USER}>`;
 
   const text = html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -27,17 +30,12 @@ export async function sendEmail({ to, subject, html }) {
     .trim();
 
   try {
-    const [response] = await sgMail.send({ to, from: FROM, subject, html, text });
-    const messageId = response.headers?.["x-message-id"] || "";
-    logger.info(`Email sent → ${to}: "${subject}" (${response.statusCode})`);
-    return { success: true, messageId };
+    const info = await t.sendMail({ from: FROM, to, subject, html, text });
+    logger.info(`Email sent → ${to}: "${subject}" (${info.messageId})`);
+    return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.log(err)
-    const sgErrors = err.response?.body?.errors;
-    const statusCode = err.code || err.response?.statusCode || "";
-    const detail = sgErrors?.map((e) => e.message).join("; ") || err.message || "Unknown error";
-    logger.error(`Email failed → ${to} [${statusCode}]: ${detail}`);
-    if (sgErrors) logger.error(`SendGrid detail: ${JSON.stringify(sgErrors)}`);
+    const detail = err.message || "Unknown error";
+    logger.error(`Email failed → ${to}: ${detail}`);
     return { success: false, error: detail };
   }
 }
@@ -289,6 +287,40 @@ export const emailTemplates = {
 
       <p style="color:#475569;line-height:1.75;margin:0">
         We look forward to hearing from you. Thank you for your patience.
+      </p>
+    `),
+
+  forgotPassword: (name, resetUrl) =>
+    base(`
+      <h2 style="margin:0 0 8px;color:#1e293b;font-size:1.4rem">Reset Your Password</h2>
+      <p style="margin:0 0 20px;color:#64748b;font-size:0.95rem">We received a request to reset your Doctor Book password.</p>
+
+      <p style="color:#475569;line-height:1.75;margin:0 0 16px">
+        Dear <strong style="color:#1e293b">${name}</strong>,
+      </p>
+      <p style="color:#475569;line-height:1.75;margin:0 0 20px">
+        Click the button below to set a new password. This link is valid for <strong>1 hour</strong>.
+      </p>
+
+      <table cellpadding="0" cellspacing="0" style="margin:24px 0">
+        <tr>
+          <td style="background:#0d9488;border-radius:8px;padding:12px 28px;text-align:center">
+            <a href="${resetUrl}" style="color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none">
+              Reset Password →
+            </a>
+          </td>
+        </tr>
+      </table>
+
+      ${infoBox("#fefce8", "#fde68a", `
+        <p style="margin:0;color:#92400e;font-size:0.88rem;line-height:1.6">
+          If you did not request a password reset, you can safely ignore this email.
+          Your password will remain unchanged.
+        </p>
+      `)}
+
+      <p style="color:#94a3b8;font-size:0.8rem;margin:16px 0 0;text-align:center">
+        This link expires in 1 hour. If it has expired, request a new one from the login page.
       </p>
     `),
 };

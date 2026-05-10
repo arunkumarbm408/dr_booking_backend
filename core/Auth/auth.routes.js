@@ -11,5 +11,7 @@ router.post("/login", authController.login);
 router.get("/me", protect, authController.getMe);
 router.put("/me", protect, authController.updateMe);
 router.put("/change-password", protect, authController.changePassword);
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/reset-password/:token", authController.resetPassword);
 
 export default router;

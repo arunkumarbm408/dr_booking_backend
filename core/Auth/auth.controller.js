@@ -54,6 +54,29 @@ class AuthController {
        } */
     return authService.changePassword(req, res);
   }
+
+  async forgotPassword(req, res) {
+    /* #swagger.tags = ['Auth']
+       #swagger.description = 'Request a password reset link sent to the registered email' */
+    /* #swagger.parameters['body'] = {
+         in: 'body',
+         required: true,
+         schema: { email: 'user@example.com' }
+       } */
+    return authService.forgotPassword(req, res);
+  }
+
+  async resetPassword(req, res) {
+    /* #swagger.tags = ['Auth']
+       #swagger.description = 'Reset password using the token from the email link' */
+    /* #swagger.parameters['token'] = { in: 'path', required: true, type: 'string' } */
+    /* #swagger.parameters['body'] = {
+         in: 'body',
+         required: true,
+         schema: { newPassword: 'newPassword123' }
+       } */
+    return authService.resetPassword(req, res);
+  }
 }
 
 export default new AuthController();

@@ -2,7 +2,8 @@ import logger from "../../utils/logger.js";
 import User from "../User/user.model.js";
 import Doctor from "../Doctor/doctor.model.js";
 import { generateToken } from "../../utils/generateToken.js";
-import { registerSchema, doctorRegisterSchema, loginSchema, changePasswordSchema } from "./auth.validation.js";
+import crypto from "crypto";
+import { registerSchema, doctorRegisterSchema, loginSchema, changePasswordSchema, forgotPasswordSchema, resetPasswordSchema } from "./auth.validation.js";
 import { sendEmail, emailTemplates } from "../../utils/email.js";
 
 class AuthService {
@@ -192,6 +193,69 @@ class AuthService {
     } catch (err) {
       logger.error(`ChangePassword: ${err}`);
       return res.status(500).json({ status: "error", message: "Failed to change password" });
+    }
+  }
+
+  async forgotPassword(req, res) {
+    try {
+      const { error, value } = forgotPasswordSchema.validate(req.body);
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
+
+      const user = await User.findOne({ email: value.email });
+      // Always return success to avoid email enumeration
+      if (!user) {
+        return res.status(200).json({ status: "success", message: "If that email is registered, a reset link has been sent." });
+      }
+
+      const rawToken = user.createPasswordResetToken();
+      await user.save({ validateBeforeSave: false });
+
+      const resetUrl = `${process.env.CLIENT_URL}/reset-password/${rawToken}`;
+      const emailResult = await sendEmail({
+        to: user.email,
+        subject: "Password Reset Request — Doctor Book",
+        html: emailTemplates.forgotPassword(user.name, resetUrl),
+      });
+
+      if (!emailResult.success) {
+        user.passwordResetToken = undefined;
+        user.passwordResetExpires = undefined;
+        await user.save({ validateBeforeSave: false });
+        logger.error(`ForgotPassword email failed for ${user.email}`);
+        return res.status(500).json({ status: "error", message: "Failed to send reset email. Please try again." });
+      }
+
+      return res.status(200).json({ status: "success", message: "If that email is registered, a reset link has been sent." });
+    } catch (err) {
+      logger.error(`ForgotPassword: ${err}`);
+      return res.status(500).json({ status: "error", message: "Failed to process request" });
+    }
+  }
+
+  async resetPassword(req, res) {
+    try {
+      const { error, value } = resetPasswordSchema.validate(req.body);
+      if (error) return res.status(400).json({ status: "fail", message: error.message });
+
+      const hashedToken = crypto.createHash("sha256").update(req.params.token).digest("hex");
+      const user = await User.findOne({
+        passwordResetToken: hashedToken,
+        passwordResetExpires: { $gt: Date.now() },
+      }).select("+passwordResetToken +passwordResetExpires");
+
+      if (!user) {
+        return res.status(400).json({ status: "fail", message: "Reset link is invalid or has expired." });
+      }
+
+      user.password = value.newPassword;
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save();
+
+      return res.status(200).json({ status: "success", message: "Password has been reset. You can now log in." });
+    } catch (err) {
+      logger.error(`ResetPassword: ${err}`);
+      return res.status(500).json({ status: "error", message: "Failed to reset password" });
     }
   }
 }
